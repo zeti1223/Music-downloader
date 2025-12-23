@@ -1,155 +1,189 @@
 import os
 import subprocess
+import threading
 from pathlib import Path
 import re
+import tkinter as tk
+from tkinter import messagebox
+import customtkinter as ctk
 
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
-from rich.console import Console
-from rich.progress import Progress
-import questionary
 
-console = Console()
+# --- Alapbeállítások és stílus ---
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
 BASE_DIR = Path.home() / "MusicDownloader"
 BASE_DIR.mkdir(exist_ok=True)
 
-# =====================
-# Spotify init
-# =====================
-def init_spotify():
-    cid = os.getenv("SPOTIFY_CLIENT_ID")
-    secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+class MusicDownloaderGUI(ctk.CTk):
+    def __init__(self):
+        super().__init__()
 
-    if not cid or not secret:
-        console.print("[bold red]Hiányzó Spotify env változók, bazmeg[/bold red]")
-        exit(1)
+        self.title("Zeneletöltő - Modern GUI")
+        self.geometry("600x550")
 
-    return spotipy.Spotify(
-        auth_manager=SpotifyClientCredentials(
-            client_id=cid,
-            client_secret=secret
+        # UI elemek felépítése
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Létrehozza a grafikus felület elemeit."""
+        self.grid_columnconfigure(0, weight=1)
+
+        # Főcím
+        self.label = ctk.CTkLabel(self, text="Zeneletöltő Pro", font=ctk.CTkFont(size=26, weight="bold"))
+        self.label.pack(pady=(30, 20))
+
+        # Link bemeneti mező
+        self.link_label = ctk.CTkLabel(self, text="Spotify Playlist vagy YouTube Link:")
+        self.link_label.pack(pady=(10, 0))
+
+        self.link_entry = ctk.CTkEntry(self, placeholder_text="Illeszd be a linket ide...", width=480)
+        self.link_entry.pack(pady=10)
+
+        # Minőség választó (a beküldött logikád alapján)
+        self.quality_label = ctk.CTkLabel(self, text="Válassz minőséget:")
+        self.quality_label.pack(pady=(10, 0))
+
+        self.quality_options = ["MP3 128kb", "MP3 320kb", "FLAC"]
+        self.quality_var = ctk.StringVar(value="MP3 320kb")
+        self.quality_dropdown = ctk.CTkOptionMenu(self, values=self.quality_options, variable=self.quality_var)
+        self.quality_dropdown.pack(pady=10)
+
+        # Letöltés gomb
+        self.download_btn = ctk.CTkButton(
+            self,
+            text="Letöltés Indítása",
+            command=self.start_download_thread,
+            fg_color="#1DB954", # Spotify zöld
+            hover_color="#18a34a",
+            font=ctk.CTkFont(weight="bold")
         )
-    )
+        self.download_btn.pack(pady=30)
 
-# =====================
-# Spotify playlist (pagination!)
-# =====================
-def get_all_spotify_tracks(sp, playlist_url):
-    tracks = []
-    results = sp.playlist_items(playlist_url, additional_types=["track"])
+        # Eseménynapló (Log)
+        self.log_text = ctk.CTkTextbox(self, width=500, height=180, font=ctk.CTkFont(family="Consolas", size=12))
+        self.log_text.pack(pady=10)
+        self.log_text.insert("0.0", "Rendszer készen áll...\n")
+        self.log_text.configure(state="disabled")
 
-    while results:
-        for item in results["items"]:
-            track = item.get("track")
-            if not track:
-                continue
+    def log(self, message):
+        """Üzenet kiírása a log ablakba."""
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", f"> {message}\n")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
 
-            tracks.append({
-                "title": track["name"],
-                "artist": track["artists"][0]["name"],
-                "album": track["album"]["name"],
-                "year": track["album"]["release_date"][:4]
-            })
+    # --- Zeneletöltő Logika ---
 
-        if results["next"]:
-            results = sp.next(results)
-        else:
-            results = None
+    def init_spotify(self):
+        """Spotify kliens inicializálása környezeti változókból."""
+        cid = os.getenv("SPOTIFY_CLIENT_ID")
+        secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+        if not cid or not secret:
+            return None
+        return spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=cid, client_secret=secret))
 
-    return tracks
+    def get_spotify_tracks(self, sp, url):
+        """Összes szám lekérése a playlistből lapozással."""
+        tracks = []
+        try:
+            results = sp.playlist_items(url, additional_types=["track"])
+            while results:
+                for item in results["items"]:
+                    track = item.get("track")
+                    if track:
+                        tracks.append({
+                            "title": track["name"],
+                            "artist": track["artists"][0]["name"]
+                        })
+                results = sp.next(results) if results["next"] else None
+        except Exception as e:
+            self.log(f"Spotify hiba: {e}")
+        return tracks
 
-# =====================
-# YouTube Music vagy keresés
-# =====================
-def is_youtube_link(url: str):
-    return "youtube.com" in url or "youtu.be" in url or "music.youtube.com" in url
+    def download_audio(self, query, quality_cfg, out_dir):
+        """A yt-dlp hívása a letöltéshez."""
+        url_or_search = query
+        if not re.match(r'https?://', query):
+            url_or_search = f"ytsearch1:{query}"
+        elif "music.youtube.com" in query:
+            url_or_search = query.replace("music.youtube.com", "www.youtube.com")
 
-def fix_youtube_music_link(url: str):
-    if "music.youtube.com" in url:
-        return url.replace("music.youtube.com", "www.youtube.com")
-    return url
-
-# =====================
-# yt-dlp letöltés
-# =====================
-def download_audio(query, quality, out_dir):
-    url_or_search = query
-    if not re.match(r'https?://', query):
-        # nem link -> keresés
-        url_or_search = f"ytsearch1:{query}"
-    else:
-        url_or_search = fix_youtube_music_link(query)
-
-    cmd = [
-        "yt-dlp",
-        url_or_search,
-        "-x",
-        "--audio-format", quality["format"],
-        "--audio-quality", quality["bitrate"],
-        "--embed-metadata",
-        "--no-playlist",
-        "-o", str(out_dir / "%(title)s.%(ext)s")
-    ]
-
-    try:
-        # check=True hogy hibát dobjon, látszódjon
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]Hiba a letöltésnél: {e}[/red]")
-
-# =====================
-# Fő logika
-# =====================
-def main():
-    console.print("\n[bold green]Zeneletöltő szar elindult[/bold green]\n")
-
-    link = questionary.text(
-        "Spotify playlist vagy YouTube Music linket ide, ne tökölj:"
-    ).ask()
-
-    quality_choice = questionary.select(
-        "Milyen minőséget akarsz, te válogatós geci?",
-        choices=[
-            "MP3 128kb",
-            "MP3 320kb",
-            "FLAC"
+        cmd = [
+            "yt-dlp",
+            url_or_search,
+            "-x",
+            "--audio-format", quality_cfg["format"],
+            "--audio-quality", quality_cfg["bitrate"],
+            "--embed-metadata",
+            "--no-playlist",
+            "-o", str(out_dir / "%(title)s.%(ext)s")
         ]
-    ).ask()
 
-    quality_map = {
-        "MP3 128kb": {"format": "mp3", "bitrate": "128K"},
-        "MP3 320kb": {"format": "mp3", "bitrate": "320K"},
-        "FLAC": {"format": "flac", "bitrate": "0"}
-    }
+        # A háttérben futtatjuk, a kimenetet nem várjuk meg részletesen
+        subprocess.run(cmd, capture_output=True)
 
-    quality = quality_map[quality_choice]
+    def start_download_thread(self):
+        """Gombnyomásra elindítja a letöltést egy külön szálon."""
+        self.download_btn.configure(state="disabled")
+        thread = threading.Thread(target=self.process_download, daemon=True)
+        thread.start()
 
-    playlist_dir = BASE_DIR / "Downloaded"
-    playlist_dir.mkdir(exist_ok=True)
+    def process_download(self):
+        """A tényleges letöltési folyamat menedzselése."""
+        link = self.link_entry.get().strip()
+        if not link:
+            messagebox.showwarning("Figyelem", "Üres a link mező!")
+            self.download_btn.configure(state="normal")
+            return
 
-    if "spotify.com" in link:
-        sp = init_spotify()
-        tracks = get_all_spotify_tracks(sp, link)
-        console.print(f"[cyan]{len(tracks)} track megtalálva Spotify playlistből[/cyan]")
+        # Minőség beállítása
+        quality_map = {
+            "MP3 128kb": {"format": "mp3", "bitrate": "128K"},
+            "MP3 320kb": {"format": "mp3", "bitrate": "320K"},
+            "FLAC": {"format": "flac", "bitrate": "0"}
+        }
+        quality = quality_map[self.quality_var.get()]
 
-        with Progress() as progress:
-            task = progress.add_task("Letöltés mint a kurvaélet...", total=len(tracks))
+        playlist_dir = BASE_DIR / "Downloaded"
+        playlist_dir.mkdir(exist_ok=True)
 
-            for track in tracks:
-                search = f"{track['artist']} - {track['title']}"
-                download_audio(search, quality, playlist_dir)
-                progress.advance(task)
+        # Spotify link felismerése
+        if "open.spotify.com" in link:
+            self.log("Spotify link észlelve. Kapcsolódás...")
+            sp = self.init_spotify()
 
-    elif is_youtube_link(link):
-        console.print("[cyan]YouTube Music / YouTube link észlelve, kezdődik a letöltés[/cyan]")
-        download_audio(link, quality, playlist_dir)
+            if not sp:
+                self.log("HIBA: Hiányzó Spotify API kulcsok!")
+                messagebox.showerror("Hiba", "Nincsenek beállítva a környezeti változók (SPOTIFY_CLIENT_ID / SECRET)!")
+            else:
+                tracks = self.get_spotify_tracks(sp, link)
+                self.log(f"{len(tracks)} zeneszám beolvasva. Letöltés indul...")
 
-    else:
-        console.print("[red]Hülye link, semmi értelme[/red]")
-        return
+                for i, track in enumerate(tracks, 1):
+                    search_str = f"{track['artist']} - {track['title']}"
+                    self.log(f"[{i}/{len(tracks)}] Letöltés: {search_str}")
+                    self.download_audio(search_str, quality, playlist_dir)
 
-    console.print(f"\n[bold magenta]Kész. A letöltések itt vannak: {playlist_dir}[/bold magenta]\n")
+                self.log("Minden Spotify szám kész!")
+
+        # YouTube link felismerése
+        elif "youtube.com" in link or "youtu.be" in link:
+            self.log("YouTube link észlelve. Letöltés...")
+            self.download_audio(link, quality, playlist_dir)
+            self.log("Letöltés befejezve!")
+
+        else:
+            self.log("Ismeretlen link, keresésként kezelem...")
+            self.download_audio(link, quality, playlist_dir)
+            self.log("Keresés és letöltés kész!")
+
+        self.log(f"Fájlok helye: {playlist_dir}")
+        self.download_btn.configure(state="normal")
+        messagebox.showinfo("Kész", "A művelet sikeresen befejeződött!")
 
 if __name__ == "__main__":
-    main()
+    app = MusicDownloaderGUI()
+    app.mainloop()
