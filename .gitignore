@@ -1,0 +1,53 @@
+# =====================
+# Python szarok
+# =====================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# =====================
+# Virtualenv
+# =====================
+.venv/
+venv/
+env/
+
+# =====================
+# Environment / secrets
+# =====================
+.env
+.env.*
+*.secret
+
+# =====================
+# Letöltött zenék
+# =====================
+MusicDownloader/
+*.mp3
+*.flac
+*.wav
+*.m4a
+*.opus
+*.ogg
+
+# =====================
+# yt-dlp maradványok
+# =====================
+*.part
+*.ytdlp
+*.temp
+
+# =====================
+# OS szarok
+# =====================
+.DS_Store
+Thumbs.db
+
+# =====================
+# IDE / editor
+# =====================
+.vscode/
+.idea/
+*.swp
+*.swo
