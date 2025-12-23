@@ -9,20 +9,19 @@ import customtkinter as ctk
 import datetime
 import json
 
-# .env fájl betöltése
-from dotenv import load_dotenv
-load_dotenv()
-
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+CONFIG_FILE = "config.json"
 
 class MusicDownloaderGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         self.title("Music Downloader Pro")
-        self.geometry("900x750")
+        self.geometry("900x800")
 
+        # Logika változók
         self.current_process = None
         self.stop_requested = False
         self.pause_requested = False
@@ -30,8 +29,11 @@ class MusicDownloaderGUI(ctk.CTk):
         self.is_downloading = False
         self.item_counter = 0
 
+        # Konfigurációk (Alapértelmezett értékek)
         self.download_path = tk.StringVar(value=str(Path.home() / "MusicDownloader"))
         self.quality_var = tk.StringVar(value="MP3 320kbps")
+        self.spotify_id = tk.StringVar()
+        self.spotify_secret = tk.StringVar()
 
         self.quality_map = {
             "MP3 128kbps": {"format": "mp3", "bitrate": "128K"},
@@ -42,6 +44,7 @@ class MusicDownloaderGUI(ctk.CTk):
             "FLAC": {"format": "flac", "bitrate": "0"},
         }
 
+        self.load_settings()
         self.setup_ui()
 
     def setup_ui(self):
@@ -63,7 +66,7 @@ class MusicDownloaderGUI(ctk.CTk):
         input_frame = ctk.CTkFrame(self.tab_queue, fg_color="transparent")
         input_frame.pack(fill="x", padx=10, pady=(10, 5))
 
-        self.link_entry = ctk.CTkEntry(input_frame, placeholder_text="Paste Spotify/YouTube link or search...", height=35)
+        self.link_entry = ctk.CTkEntry(input_frame, placeholder_text="Spotify/YouTube link vagy keresés...", height=35)
         self.link_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
 
         controls_frame = ctk.CTkFrame(self.tab_queue, fg_color="transparent")
@@ -87,7 +90,7 @@ class MusicDownloaderGUI(ctk.CTk):
         self.queue_frame = ctk.CTkScrollableFrame(self.tab_queue)
         self.queue_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-        self.speed_label = ctk.CTkLabel(self.tab_queue, text="Ready | Speed: 0 KiB/s | Progress: 0%", font=ctk.CTkFont(family="Consolas", size=12))
+        self.speed_label = ctk.CTkLabel(self.tab_queue, text="Kész | Sebesség: 0 KiB/s | Haladás: 0%", font=ctk.CTkFont(family="Consolas", size=12))
         self.speed_label.pack(pady=5)
 
     def setup_log_tab(self):
@@ -96,15 +99,55 @@ class MusicDownloaderGUI(ctk.CTk):
         self.full_log_text.configure(state="disabled")
 
     def setup_settings_tab(self):
-        ctk.CTkLabel(self.tab_settings, text="Download Root Folder:", font=ctk.CTkFont(weight="bold")).pack(pady=(20, 5))
-        self.path_entry = ctk.CTkEntry(self.tab_settings, textvariable=self.download_path, width=500)
-        self.path_entry.pack(pady=5)
-        self.browse_btn = ctk.CTkButton(self.tab_settings, text="Browse", command=self.browse_folder)
-        self.browse_btn.pack(pady=5)
+        # Mappa választó
+        ctk.CTkLabel(self.tab_settings, text="Letöltési mappa:", font=ctk.CTkFont(weight="bold")).pack(pady=(10, 5))
+        path_f = ctk.CTkFrame(self.tab_settings, fg_color="transparent")
+        path_f.pack(fill="x", padx=20)
+        ctk.CTkEntry(path_f, textvariable=self.download_path).pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkButton(path_f, text="Tallózás", width=100, command=self.browse_folder).pack(side="left")
 
-        ctk.CTkLabel(self.tab_settings, text="Format & Quality:", font=ctk.CTkFont(weight="bold")).pack(pady=(30, 5))
+        # Spotify Kulcsok
+        ctk.CTkLabel(self.tab_settings, text="Spotify API Kulcsok:", font=ctk.CTkFont(weight="bold")).pack(pady=(20, 5))
+
+        ctk.CTkLabel(self.tab_settings, text="Client ID:").pack(anchor="w", padx=25)
+        self.id_ent = ctk.CTkEntry(self.tab_settings, textvariable=self.spotify_id, width=500, show="*")
+        self.id_ent.pack(pady=5, padx=20)
+
+        ctk.CTkLabel(self.tab_settings, text="Client Secret:").pack(anchor="w", padx=25)
+        self.sec_ent = ctk.CTkEntry(self.tab_settings, textvariable=self.spotify_secret, width=500, show="*")
+        self.sec_ent.pack(pady=5, padx=20)
+
+        # Minőség
+        ctk.CTkLabel(self.tab_settings, text="Formátum & Minőség:", font=ctk.CTkFont(weight="bold")).pack(pady=(20, 5))
         self.quality_dropdown = ctk.CTkOptionMenu(self.tab_settings, values=list(self.quality_map.keys()), variable=self.quality_var)
-        self.quality_dropdown.pack(pady=10)
+        self.quality_dropdown.pack(pady=5)
+
+        # Mentés gomb
+        ctk.CTkButton(self.tab_settings, text="Beállítások Mentése", fg_color="#1f538d", command=self.save_settings).pack(pady=30)
+
+    # --- Beállítások kezelése ---
+    def load_settings(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    data = json.load(f)
+                    self.download_path.set(data.get("path", self.download_path.get()))
+                    self.spotify_id.set(data.get("sp_id", ""))
+                    self.spotify_secret.set(data.get("sp_sec", ""))
+                    self.quality_var.set(data.get("quality", "MP3 320kbps"))
+            except: pass
+
+    def save_settings(self):
+        data = {
+            "path": self.download_path.get(),
+            "sp_id": self.spotify_id.get().strip(),
+            "sp_sec": self.spotify_secret.get().strip(),
+            "quality": self.quality_var.get()
+        }
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(data, f)
+        self.log("Beállítások elmentve.", "UI")
+        messagebox.showinfo("Mentés", "Beállítások sikeresen elmentve!")
 
     def log(self, message, level="INFO"):
         ts = datetime.datetime.now().strftime("%H:%M:%S")
@@ -126,10 +169,8 @@ class MusicDownloaderGUI(ctk.CTk):
             row = ctk.CTkFrame(self.queue_frame, fg_color="transparent")
             row.pack(fill="x", pady=1)
 
-            btn_up = ctk.CTkButton(row, text="▲", width=28, height=24, command=lambda i=index: self.move_item(i, -1))
-            btn_up.pack(side="left", padx=1)
-            btn_down = ctk.CTkButton(row, text="▼", width=28, height=24, command=lambda i=index: self.move_item(i, 1))
-            btn_down.pack(side="left", padx=1)
+            ctk.CTkButton(row, text="▲", width=28, height=24, command=lambda i=index: self.move_item(i, -1)).pack(side="left", padx=1)
+            ctk.CTkButton(row, text="▼", width=28, height=24, command=lambda i=index: self.move_item(i, 1)).pack(side="left", padx=1)
 
             status_colors = {"waiting": "white", "working": "#FF8C00", "done": "#1DB954", "error": "#FF0000"}
             lbl = ctk.CTkLabel(row, text=f"{item['display_name']} {'['+item['folder']+']' if item['folder'] else ''}",
@@ -149,29 +190,28 @@ class MusicDownloaderGUI(ctk.CTk):
 
     def abort_process(self):
         self.stop_requested = True
-        if self.current_process:
-            self.current_process.terminate()
+        if self.current_process: self.current_process.terminate()
         self.is_downloading = False
-        self.speed_label.configure(text="Aborted | Speed: 0 KiB/s | Progress: 0%")
+        self.speed_label.configure(text="Megszakítva | Sebesség: 0 KiB/s | Haladás: 0%")
 
     def clear_queue_list(self):
         if self.is_downloading: return
         self.download_queue.clear()
         self.refresh_queue_ui()
-        self.speed_label.configure(text="Ready | Speed: 0 KiB/s | Progress: 0%")
+        self.speed_label.configure(text="Kész | Sebesség: 0 KiB/s | Haladás: 0%")
 
     def init_spotify(self):
-        cid = os.getenv("SPOTIFY_CLIENT_ID")
-        sec = os.getenv("SPOTIFY_CLIENT_SECRET")
+        cid = self.spotify_id.get().strip()
+        sec = self.spotify_secret.get().strip()
         if not cid or not sec:
-            self.log("Missing Spotify Credentials in .env!", "ERROR")
+            self.log("HIÁNYZIK: Spotify ID vagy Secret a Beállításoknál!", "ERROR")
             return None
         try:
-            from spotipy import Spotify
+            import spotipy
             from spotipy.oauth2 import SpotifyClientCredentials
-            return Spotify(auth_manager=SpotifyClientCredentials(client_id=cid.strip(), client_secret=sec.strip()))
+            return spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=cid, client_secret=sec))
         except Exception as e:
-            self.log(f"Spotify Init Error: {e}", "ERROR")
+            self.log(f"Spotify Belépési Hiba: {e}", "ERROR")
             return None
 
     def add_to_queue_thread(self):
@@ -182,9 +222,7 @@ class MusicDownloaderGUI(ctk.CTk):
         self.link_entry.delete(0, 'end')
 
     def process_input(self, link):
-        self.log(f"Analyzing: {link}", "ANALYZER")
-
-        # 1. Tisztítás: ha a link végén van ?si=... vagy egyéb adat, azt levágjuk
+        self.log(f"Elemzés: {link}", "ANALYZER")
         clean_link = link.split('?')[0]
 
         if "spotify.com" in clean_link:
@@ -195,11 +233,9 @@ class MusicDownloaderGUI(ctk.CTk):
 
             try:
                 if "/playlist/" in clean_link:
-                    # ID kinyerése a linkből
                     playlist_id = clean_link.split("/playlist/")[1].split("/")[0]
                     pl = sp.playlist(playlist_id)
                     f_name = re.sub(r'[\\/*?:"<>|]', "", pl['name'])
-
                     results = sp.playlist_items(playlist_id)
                     tracks = results['items']
                     while results['next']:
@@ -212,7 +248,7 @@ class MusicDownloaderGUI(ctk.CTk):
                             name = f"{t['artists'][0]['name']} - {t['name']}"
                             self.download_queue.append({"query": name, "display_name": name, "folder": f_name, "status": "waiting", "id": self.item_counter})
                             self.item_counter += 1
-                    self.log(f"Added Spotify Playlist: {pl['name']}", "SUCCESS")
+                    self.log(f"Hozzáadva: {len(tracks)} szám a(z) {pl['name']} listából.", "SUCCESS")
 
                 elif "/track/" in clean_link:
                     track_id = clean_link.split("/track/")[1].split("/")[0]
@@ -220,32 +256,29 @@ class MusicDownloaderGUI(ctk.CTk):
                     name = f"{t['artists'][0]['name']} - {t['name']}"
                     self.download_queue.append({"query": name, "display_name": name, "folder": None, "status": "waiting", "id": self.item_counter})
                     self.item_counter += 1
-                    self.log(f"Added track: {name}", "SUCCESS")
+                    self.log(f"Hozzáadva: {name}", "SUCCESS")
             except Exception as e:
-                self.log(f"Spotify API error: {e}", "ERROR")
+                self.log(f"Spotify API hiba: {e}", "ERROR")
 
         elif "youtube.com" in link or "youtu.be" in link:
             try:
-                # Flat playlist a gyorsabb elemzésért
                 cmd = ["yt-dlp", "--flat-playlist", "--dump-single-json", link]
                 res = subprocess.run(cmd, capture_output=True, text=True)
                 data = json.loads(res.stdout)
-
-                if 'entries' in data: # Playlist
+                if 'entries' in data:
                     f_name = re.sub(r'[\\/*?:"<>|]', "", data.get('title', 'YT_Playlist'))
                     for entry in data['entries']:
                         title = entry.get('title', 'Unknown Title')
                         url = f"https://www.youtube.com/watch?v={entry['id']}" if 'id' in entry else title
                         self.download_queue.append({"query": url, "display_name": title, "folder": f_name, "status": "waiting", "id": self.item_counter})
                         self.item_counter += 1
-                else: # Single video
+                else:
                     title = data.get('title', link)
                     self.download_queue.append({"query": link, "display_name": title, "folder": None, "status": "waiting", "id": self.item_counter})
                     self.item_counter += 1
-            except Exception as e:
-                self.log(f"YouTube analyzer error: {e}", "ERROR")
+            except Exception as e: self.log(f"YouTube hiba: {e}", "ERROR")
 
-        else: # Sima keresés
+        else: # Search
             self.download_queue.append({"query": link, "display_name": link, "folder": None, "status": "waiting", "id": self.item_counter})
             self.item_counter += 1
 
@@ -281,24 +314,21 @@ class MusicDownloaderGUI(ctk.CTk):
             self.after(0, self.refresh_queue_ui)
 
         self.is_downloading = False
-        self.log("Process completed.", "SYSTEM")
+        self.log("Kész!", "SYSTEM")
 
     def run_yt_dlp(self, query, cfg, out_dir):
         url = query if query.startswith("http") else f"ytsearch1:{query}"
-        cmd = ["yt-dlp", url, "-x", "--audio-format", cfg["format"], "--newline",
-               "-o", str(out_dir / "%(title)s.%(ext)s")]
+        cmd = ["yt-dlp", url, "-x", "--audio-format", cfg["format"], "--newline", "-o", str(out_dir / "%(title)s.%(ext)s")]
         if cfg["bitrate"] != "0": cmd.extend(["--audio-quality", cfg["bitrate"]])
 
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.current_process = proc
-
         for line in proc.stdout:
             if self.stop_requested: break
             match = re.search(r'\[download\]\s+(\d+\.\d+)%.*at\s+([\d\.]+\w+/s)', line)
             if match:
                 p, s = match.groups()
-                self.after(0, lambda p=p, s=s: self.speed_label.configure(text=f"Speed: {s} | Progress: {p}%"))
-
+                self.after(0, lambda p=p, s=s: self.speed_label.configure(text=f"Sebesség: {s} | Haladás: {p}%"))
         proc.wait()
         return proc.returncode == 0
 

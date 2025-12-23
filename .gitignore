@@ -24,7 +24,6 @@ env/
 # =====================
 # Letöltött zenék
 # =====================
-MusicDownloader/
 *.mp3
 *.flac
 *.wav
@@ -44,6 +43,7 @@ MusicDownloader/
 # =====================
 .DS_Store
 Thumbs.db
+.directory
 
 # =====================
 # IDE / editor
@@ -52,3 +52,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+# =====================
+# config
+# =====================
+config.json
