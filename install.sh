@@ -2,10 +2,10 @@
 
 set -e
 
-echo "🚀 Kezdjük a szart, rendszerfrissítés..."
+echo "System update..."
 sudo pacman -Syu --noconfirm
 
-echo "📦 Alap csomagok telepítése..."
+echo "Installing basic packages..."
 sudo pacman -S --noconfirm \
     python \
     python-pip \
@@ -14,14 +14,14 @@ sudo pacman -S --noconfirm \
     git \
     base-devel
 
-echo "🐍 Python virtualenv létrehozása..."
+echo "Creating Python virtualenv..."
 if [ ! -d ".venv" ]; then
     python -m venv .venv
 fi
 
 source .venv/bin/activate
 
-echo "📚 Python libraryk telepítése..."
+echo "Installing Python libraries..."
 pip install --upgrade pip
 
 pip install \
@@ -33,7 +33,7 @@ pip install \
     rich \
     questionary
 
-echo "✅ Kész bazmeg!"
+echo "Done!"
 echo ""
-echo "👉 Aktiváláshoz futtasd:"
+echo "To activate, run:"
 echo "source .venv/bin/activate"
