@@ -21,26 +21,27 @@ class MusicDownloaderGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Music Downloader")
-        self.geometry("700x680")
+        self.title("Music Downloader Pro")
+        self.geometry("800x750")
 
-        # Process management for abortlation
+        # Core logic variables
         self.current_process = None
         self.stop_requested = False
+        self.download_queue = []
+        self.is_downloading = False
 
-        # Configurations
-        self.download_path = tk.StringVar(value=str(Path.home() / "MusicDownloader" / "Downloaded"))
-        self.quality_var = tk.StringVar(value="MP3 320kb")
+        # Configs
+        self.download_path = tk.StringVar(value=str(Path.home() / "MusicDownloader"))
+        self.quality_var = tk.StringVar(value="MP3 320kbps")
 
         self.quality_map = {
-            "MP3 128kb": {"format": "mp3", "bitrate": "128K", "args": []},
-            "MP3 320kb": {"format": "mp3", "bitrate": "320K", "args": []},
+            "MP3 128kbps": {"format": "mp3", "bitrate": "128K", "args": []},
+            "MP3 256kbps": {"format": "mp3", "bitrate": "256K", "args": []},
+            "MP3 320kbps": {"format": "mp3", "bitrate": "320K", "args": []},
+            "OGG": {"format": "vorbis", "bitrate": "192K", "args": []},
+            "M4A": {"format": "m4a", "bitrate": "192K", "args": []},
+            "MPEG": {"format": "mp3", "bitrate": "192K", "args": []},
             "FLAC": {"format": "flac", "bitrate": "0", "args": []},
-            "WAV 48kHz 24bit": {
-                "format": "wav",
-                "bitrate": None,
-                "args": ["--postprocessor-args", "ffmpeg:-ar 48000 -sample_fmt s32"]
-            }
         }
 
         self.setup_ui()
@@ -52,44 +53,51 @@ class MusicDownloaderGUI(ctk.CTk):
         self.tabview = ctk.CTkTabview(self)
         self.tabview.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
 
-        self.tab_main = self.tabview.add("Download")
+        self.tab_queue = self.tabview.add("Queue & Download")
         self.tab_settings = self.tabview.add("Settings")
 
-        self.setup_main_tab()
+        self.setup_queue_tab()
         self.setup_settings_tab()
 
-    def setup_main_tab(self):
-        self.label = ctk.CTkLabel(self.tab_main, text="Music Downloader", font=ctk.CTkFont(size=22, weight="bold"))
-        self.label.pack(pady=20)
+    def setup_queue_tab(self):
+        # Input Section
+        input_frame = ctk.CTkFrame(self.tab_queue, fg_color="transparent")
+        input_frame.pack(fill="x", padx=10, pady=10)
 
-        self.link_entry = ctk.CTkEntry(self.tab_main, placeholder_text="Spotify or YouTube link...", width=500)
-        self.link_entry.pack(pady=10)
+        self.link_entry = ctk.CTkEntry(input_frame, placeholder_text="Paste Spotify/YouTube link or search here...", width=450)
+        self.link_entry.pack(side="left", padx=5)
 
-        # Buttons container
-        btn_frame = ctk.CTkFrame(self.tab_main, fg_color="transparent")
-        btn_frame.pack(pady=20)
+        self.add_btn = ctk.CTkButton(input_frame, text="Add to Queue", command=self.add_to_queue_thread, width=120)
+        self.add_btn.pack(side="left", padx=5)
 
-        self.download_btn = ctk.CTkButton(
-            btn_frame, text="Start Download",
-            command=self.start_download_thread,
-            fg_color="#1DB954", hover_color="#18a34a", width=200
-        )
-        self.download_btn.pack(side="left", padx=10)
+        # Queue Listbox (using a textbox to simulate a list)
+        ctk.CTkLabel(self.tab_queue, text="Download Queue:", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=15)
+        self.queue_display = ctk.CTkTextbox(self.tab_queue, height=300)
+        self.queue_display.pack(fill="both", padx=10, pady=5)
+        self.queue_display.configure(state="disabled")
 
-        self.stop_btn = ctk.CTkButton(
-            btn_frame, text="Abort",
-            command=self.stop_download,
-            fg_color="#a31818", hover_color="#7a1212", width=200,
-            state="disabled"
-        )
+        # Stats & Speed
+        self.speed_label = ctk.CTkLabel(self.tab_queue, text="Speed: 0 KiB/s | Progress: 0%", font=ctk.CTkFont(family="Consolas"))
+        self.speed_label.pack(pady=5)
+
+        # Control Buttons
+        btn_frame = ctk.CTkFrame(self.tab_queue, fg_color="transparent")
+        btn_frame.pack(pady=10)
+
+        self.start_btn = ctk.CTkButton(btn_frame, text="Start All", fg_color="#1DB954", command=self.start_downloads)
+        self.start_btn.pack(side="left", padx=10)
+
+        self.stop_btn = ctk.CTkButton(btn_frame, text="Stop / Clear", fg_color="#a31818", command=self.stop_download)
         self.stop_btn.pack(side="left", padx=10)
 
-        self.log_text = ctk.CTkTextbox(self.tab_main, width=550, height=280, font=ctk.CTkFont(family="Consolas", size=12))
-        self.log_text.pack(pady=10)
+        # 3-Line Mini Log
+        ctk.CTkLabel(self.tab_queue, text="Recent Activity:", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=15)
+        self.log_text = ctk.CTkTextbox(self.tab_queue, height=60, font=ctk.CTkFont(family="Consolas", size=11))
+        self.log_text.pack(fill="x", padx=10, pady=5)
         self.log_text.configure(state="disabled")
 
     def setup_settings_tab(self):
-        ctk.CTkLabel(self.tab_settings, text="Download Folder:", font=ctk.CTkFont(weight="bold")).pack(pady=(20, 5))
+        ctk.CTkLabel(self.tab_settings, text="Default Download Root:", font=ctk.CTkFont(weight="bold")).pack(pady=(20, 5))
         path_frame = ctk.CTkFrame(self.tab_settings, fg_color="transparent")
         path_frame.pack(fill="x", padx=40)
         self.path_entry = ctk.CTkEntry(path_frame, textvariable=self.download_path, width=350)
@@ -97,136 +105,141 @@ class MusicDownloaderGUI(ctk.CTk):
         self.browse_btn = ctk.CTkButton(path_frame, text="Browse", width=80, command=self.browse_folder)
         self.browse_btn.pack(side="left")
 
-        ctk.CTkLabel(self.tab_settings, text="Quality:", font=ctk.CTkFont(weight="bold")).pack(pady=(30, 5))
+        ctk.CTkLabel(self.tab_settings, text="Audio Format & Quality:", font=ctk.CTkFont(weight="bold")).pack(pady=(30, 5))
         self.quality_dropdown = ctk.CTkOptionMenu(self.tab_settings, values=list(self.quality_map.keys()), variable=self.quality_var)
         self.quality_dropdown.pack(pady=10)
 
     def browse_folder(self):
-        new_path = filedialog.askdirectory()
-        if new_path:
-            self.download_path.set(new_path)
+        path = filedialog.askdirectory()
+        if path: self.download_path.set(path)
 
     def log(self, message):
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"> {message}\n")
+        # Keep only last 3 lines
+        lines = self.log_text.get("1.0", "end").splitlines()
+        if len(lines) > 4:
+            self.log_text.delete("1.0", "2.0")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
-    def stop_download(self):
-        """Interrupts the running download process."""
-        self.stop_requested = True
-        if self.current_process:
-            self.current_process.terminate()
-            self.log("CANCELLED: Stopping the process...")
-        self.stop_btn.configure(state="disabled")
+    def update_queue_ui(self):
+        self.queue_display.configure(state="normal")
+        self.queue_display.delete("1.0", "end")
+        for item in self.download_queue:
+            folder_info = f" [Folder: {item['folder']}]" if item['folder'] else ""
+            self.queue_display.insert("end", f"• {item['query']}{folder_info}\n")
+        self.queue_display.configure(state="disabled")
 
     # --- Logic ---
 
     def init_spotify(self):
         cid = os.getenv("SPOTIFY_CLIENT_ID")
         secret = os.getenv("SPOTIFY_CLIENT_SECRET")
-        if not cid or not secret:
-            return None
+        if not cid or not secret: return None
         return spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=cid, client_secret=secret))
 
-    def get_spotify_content(self, sp, url):
-        tracks = []
-        try:
-            if "/track/" in url:
-                track = sp.track(url)
-                tracks.append({"title": track["name"], "artist": track["artists"][0]["name"]})
-            elif "/playlist/" in url:
-                results = sp.playlist_items(url, additional_types=["track"])
-                while results:
-                    for item in results["items"]:
-                        t = item.get("track")
-                        if t:
-                            tracks.append({"title": t["name"], "artist": t["artists"][0]["name"]})
-                    results = sp.next(results) if results["next"] else None
-        except Exception as e:
-            self.log(f"Spotify error: {e}")
-        return tracks
-
-    def download_audio(self, query, quality_cfg, out_dir):
-        if self.stop_requested:
-            return
-
-        url_or_search = query
-        if not re.match(r'https?://', query):
-            url_or_search = f"ytsearch1:{query}"
-        elif "music.youtube.com" in query:
-            url_or_search = query.replace("music.youtube.com", "www.youtube.com")
-
-        cmd = [
-            "yt-dlp", url_or_search, "-x",
-            "--audio-format", quality_cfg["format"],
-            "--embed-metadata", "--no-playlist",
-            "-o", str(Path(out_dir) / "%(title)s.%(ext)s")
-        ]
-        if quality_cfg["bitrate"]:
-            cmd.extend(["--audio-quality", quality_cfg["bitrate"]])
-        if quality_cfg["args"]:
-            cmd.extend(quality_cfg["args"])
-
-        # Using Popen for abortlability
-        self.current_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self.current_process.communicate()
-        self.current_process = None
-
-    def start_download_thread(self):
-        self.stop_requested = False
-        self.download_btn.configure(state="disabled")
-        self.stop_btn.configure(state="normal")
-        thread = threading.Thread(target=self.process_download, daemon=True)
-        thread.start()
-
-    def process_download(self):
+    def add_to_queue_thread(self):
         link = self.link_entry.get().strip()
-        if not link:
-            messagebox.showwarning("Error", "No link provided!")
-            self.ui_reset()
-            return
+        if not link: return
+        threading.Thread(target=self.process_input, args=(link,), daemon=True).start()
+        self.link_entry.delete(0, 'end')
 
-        quality = self.quality_map[self.quality_var.get()]
-        save_path = Path(self.download_path.get())
-        save_path.mkdir(parents=True, exist_ok=True)
-
+    def process_input(self, link):
+        self.log("Analyzing input...")
         if "spotify.com" in link:
-            self.log("Analyzing Spotify link...")
             sp = self.init_spotify()
             if not sp:
-                self.log("ERROR: Spotify API keys are missing!")
-            else:
-                tracks = self.get_spotify_content(sp, link)
-                if tracks:
-                    self.log(f"Processing {len(tracks)} tracks...")
-                    for i, track in enumerate(tracks, 1):
-                        if self.stop_requested: break
-                        search = f"{track['artist']} - {track['title']}"
-                        self.log(f"[{i}/{len(tracks)}] {search}")
-                        self.download_audio(search, quality, save_path)
+                self.log("Spotify API keys missing!")
+                return
 
-                    if self.stop_requested:
-                        self.log("Download stopped by user.")
-                    else:
-                        self.log("Download finished!")
+            try:
+                if "/playlist/" in link:
+                    pl = sp.playlist(link)
+                    folder_name = re.sub(r'[\\/*?:"<>|]', "", pl['name'])
+                    results = sp.playlist_items(link)
+                    tracks = results['items']
+                    while results['next']:
+                        results = sp.next(results)
+                        tracks.extend(results['items'])
 
-        elif "youtube.com" in link or "youtu.be" in link:
-            self.log("YouTube download...")
-            self.download_audio(link, quality, save_path)
-            self.log("Done!")
-
+                    for item in tracks:
+                        if item.get('track'):
+                            t = item['track']
+                            self.download_queue.append({
+                                "query": f"{t['artists'][0]['name']} - {t['name']}",
+                                "folder": folder_name
+                            })
+                    self.log(f"Added playlist: {pl['name']}")
+                elif "/track/" in link:
+                    t = sp.track(link)
+                    self.download_queue.append({"query": f"{t['artists'][0]['name']} - {t['name']}", "folder": None})
+                    self.log("Added track to queue.")
+            except Exception as e:
+                self.log(f"Spotify Error: {e}")
         else:
-            self.log(f"Searching and downloading: {link}")
-            self.download_audio(link, quality, save_path)
-            self.log("Done!")
+            # YouTube or Search
+            self.download_queue.append({"query": link, "folder": None})
+            self.log("Added to queue.")
 
-        self.ui_reset()
+        self.after(0, self.update_queue_ui)
 
-    def ui_reset(self):
-        self.download_btn.configure(state="normal")
-        self.stop_btn.configure(state="disabled")
+    def start_downloads(self):
+        if not self.download_queue or self.is_downloading: return
+        self.is_downloading = True
+        self.stop_requested = False
+        threading.Thread(target=self.download_loop, daemon=True).start()
+
+    def download_loop(self):
+        quality_cfg = self.quality_map[self.quality_var.get()]
+        base_path = Path(self.download_path.get())
+
+        while self.download_queue and not self.stop_requested:
+            item = self.download_queue.pop(0)
+            self.after(0, self.update_queue_ui)
+
+            save_dir = base_path / item['folder'] if item['folder'] else base_path
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            self.log(f"Downloading: {item['query']}")
+            self.run_yt_dlp(item['query'], quality_cfg, save_dir)
+
+        self.is_downloading = False
+        self.log("All tasks finished.")
+        self.after(0, lambda: self.speed_label.configure(text="Speed: 0 KiB/s | Progress: 100%"))
+
+    def run_yt_dlp(self, query, cfg, out_dir):
+        url = query if re.match(r'https?://', query) else f"ytsearch1:{query}"
+
+        cmd = [
+            "yt-dlp", url, "-x",
+            "--audio-format", cfg["format"],
+            "--newline",
+            "-o", str(out_dir / "%(title)s.%(ext)s")
+        ]
+        if cfg["bitrate"] and cfg["bitrate"] != "0":
+            cmd.extend(["--audio-quality", cfg["bitrate"]])
+
+        self.current_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+        for line in self.current_process.stdout:
+            if self.stop_requested: break
+            # Regex for speed and percentage
+            match = re.search(r'\[download\]\s+(\d+\.\d+)%.*at\s+([\d\.]+\w+/s)', line)
+            if match:
+                percent, speed = match.groups()
+                self.after(0, lambda p=percent, s=speed: self.speed_label.configure(text=f"Speed: {s} | Progress: {p}%"))
+
+        self.current_process.wait()
         self.current_process = None
+
+    def stop_download(self):
+        self.stop_requested = True
+        if self.current_process:
+            self.current_process.terminate()
+        self.download_queue.clear()
+        self.update_queue_ui()
+        self.log("Queue cleared & stopped.")
 
 if __name__ == "__main__":
     app = MusicDownloaderGUI()
