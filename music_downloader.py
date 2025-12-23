@@ -39,6 +39,7 @@ class MusicDownloaderGUI(ctk.CTk):
             "MP3 128kbps": {"format": "mp3", "bitrate": "128K"},
             "MP3 256kbps": {"format": "mp3", "bitrate": "256K"},
             "MP3 320kbps": {"format": "mp3", "bitrate": "320K"},
+            "WebM (Best Audio)": {"format": "webm", "bitrate": "0"},
             "OGG": {"format": "vorbis", "bitrate": "192K"},
             "M4A": {"format": "m4a", "bitrate": "192K"},
             "FLAC": {"format": "flac", "bitrate": "0"},
@@ -125,7 +126,6 @@ class MusicDownloaderGUI(ctk.CTk):
         # Save Button
         ctk.CTkButton(self.tab_settings, text="Save Settings", fg_color="#1f538d", command=self.save_settings).pack(pady=30)
 
-    # --- Settings Management ---
     def load_settings(self):
         if os.path.exists(CONFIG_FILE):
             try:
@@ -328,14 +328,21 @@ class MusicDownloaderGUI(ctk.CTk):
 
     def run_yt_dlp(self, query, cfg, out_dir):
         url = query if query.startswith("http") else f"ytsearch1:{query}"
+
+        # Base command
         cmd = ["yt-dlp", url, "-x", "--audio-format", cfg["format"], "--newline", "-o", str(out_dir / "%(title)s.%(ext)s")]
-        if cfg["bitrate"] != "0": cmd.extend(["--audio-quality", cfg["bitrate"]])
+
+        # WebM handling - usually we want the best audio without recoding if possible
+        if cfg["format"] == "webm":
+            # Just extract best audio that is webm/opus
+            cmd = ["yt-dlp", url, "-f", "bestaudio[ext=webm]/bestaudio", "--newline", "-o", str(out_dir / "%(title)s.%(ext)s")]
+        elif cfg["bitrate"] != "0":
+            cmd.extend(["--audio-quality", cfg["bitrate"]])
 
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.current_process = proc
         for line in proc.stdout:
             if self.stop_requested: break
-            # Progress regex
             match = re.search(r'\[download\]\s+(\d+\.\d+)%.*at\s+([\d\.]+\w+/s)', line)
             if match:
                 p, s = match.groups()
