@@ -21,7 +21,7 @@ class MusicDownloaderGUI(ctk.CTk):
         self.title("Music Downloader Pro")
         self.geometry("900x800")
 
-        # Logika változók
+        # Logic variables
         self.current_process = None
         self.stop_requested = False
         self.pause_requested = False
@@ -29,7 +29,7 @@ class MusicDownloaderGUI(ctk.CTk):
         self.is_downloading = False
         self.item_counter = 0
 
-        # Konfigurációk (Alapértelmezett értékek)
+        # Configuration (Default values)
         self.download_path = tk.StringVar(value=str(Path.home() / "MusicDownloader"))
         self.quality_var = tk.StringVar(value="MP3 320kbps")
         self.spotify_id = tk.StringVar()
@@ -66,7 +66,7 @@ class MusicDownloaderGUI(ctk.CTk):
         input_frame = ctk.CTkFrame(self.tab_queue, fg_color="transparent")
         input_frame.pack(fill="x", padx=10, pady=(10, 5))
 
-        self.link_entry = ctk.CTkEntry(input_frame, placeholder_text="Spotify/YouTube link vagy keresés...", height=35)
+        self.link_entry = ctk.CTkEntry(input_frame, placeholder_text="Spotify/YouTube link or search query...", height=35)
         self.link_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
 
         controls_frame = ctk.CTkFrame(self.tab_queue, fg_color="transparent")
