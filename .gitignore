@@ -1,5 +1,5 @@
 # =====================
-# Python szarok
+# Python
 # =====================
 __pycache__/
 *.py[cod]
@@ -22,7 +22,7 @@ env/
 *.secret
 
 # =====================
-# Letöltött zenék
+# Downloaded music
 # =====================
 *.mp3
 *.flac
@@ -32,14 +32,14 @@ env/
 *.ogg
 
 # =====================
-# yt-dlp maradványok
+# yt-dlp parts
 # =====================
 *.part
 *.ytdlp
 *.temp
 
 # =====================
-# OS szarok
+# OS 
 # =====================
 .DS_Store
 Thumbs.db
