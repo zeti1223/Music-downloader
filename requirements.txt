@@ -1,0 +1,4 @@
+customtkinter
+spotipy
+python-dotenv
+yt-dlp
