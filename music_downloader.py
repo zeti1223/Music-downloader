@@ -21,8 +21,12 @@ class MusicDownloaderGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Zeneletöltő Pro - Single & Playlist Support")
-        self.geometry("700x650")
+        self.title("Zeneletöltő")
+        self.geometry("700x680")
+
+        # Folyamatkezelés a megszakításhoz
+        self.current_process = None
+        self.stop_requested = False
 
         # Konfigurációk
         self.download_path = tk.StringVar(value=str(Path.home() / "MusicDownloader" / "Downloaded"))
@@ -58,15 +62,27 @@ class MusicDownloaderGUI(ctk.CTk):
         self.label = ctk.CTkLabel(self.tab_main, text="Zeneletöltő", font=ctk.CTkFont(size=22, weight="bold"))
         self.label.pack(pady=20)
 
-        self.link_entry = ctk.CTkEntry(self.tab_main, placeholder_text="Spotify (track/playlist) vagy YouTube link...", width=500)
+        self.link_entry = ctk.CTkEntry(self.tab_main, placeholder_text="Spotify vagy YouTube link...", width=500)
         self.link_entry.pack(pady=10)
 
+        # Gombok konténere
+        btn_frame = ctk.CTkFrame(self.tab_main, fg_color="transparent")
+        btn_frame.pack(pady=20)
+
         self.download_btn = ctk.CTkButton(
-            self.tab_main, text="Letöltés Indítása",
+            btn_frame, text="Letöltés Indítása",
             command=self.start_download_thread,
-            fg_color="#1DB954", hover_color="#18a34a"
+            fg_color="#1DB954", hover_color="#18a34a", width=200
         )
-        self.download_btn.pack(pady=20)
+        self.download_btn.pack(side="left", padx=10)
+
+        self.stop_btn = ctk.CTkButton(
+            btn_frame, text="Megszakítás",
+            command=self.stop_download,
+            fg_color="#a31818", hover_color="#7a1212", width=200,
+            state="disabled"
+        )
+        self.stop_btn.pack(side="left", padx=10)
 
         self.log_text = ctk.CTkTextbox(self.tab_main, width=550, height=280, font=ctk.CTkFont(family="Consolas", size=12))
         self.log_text.pack(pady=10)
@@ -96,6 +112,14 @@ class MusicDownloaderGUI(ctk.CTk):
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
+    def stop_download(self):
+        """Megszakítja a futó letöltési folyamatot."""
+        self.stop_requested = True
+        if self.current_process:
+            self.current_process.terminate()
+            self.log("MEGSZAKÍTVA: A folyamat leállítása folyamatban...")
+        self.stop_btn.configure(state="disabled")
+
     # --- Logika ---
 
     def init_spotify(self):
@@ -106,7 +130,6 @@ class MusicDownloaderGUI(ctk.CTk):
         return spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=cid, client_secret=secret))
 
     def get_spotify_content(self, sp, url):
-        """Kezeli a playlisteket és az egyedülálló trackeket is."""
         tracks = []
         try:
             if "/track/" in url:
@@ -120,14 +143,14 @@ class MusicDownloaderGUI(ctk.CTk):
                         if t:
                             tracks.append({"title": t["name"], "artist": t["artists"][0]["name"]})
                     results = sp.next(results) if results["next"] else None
-            else:
-                self.log("Ismeretlen Spotify link típus!")
         except Exception as e:
             self.log(f"Spotify hiba: {e}")
         return tracks
 
     def download_audio(self, query, quality_cfg, out_dir):
-        # YouTube Music link fixálás
+        if self.stop_requested:
+            return
+
         url_or_search = query
         if not re.match(r'https?://', query):
             url_or_search = f"ytsearch1:{query}"
@@ -145,10 +168,15 @@ class MusicDownloaderGUI(ctk.CTk):
         if quality_cfg["args"]:
             cmd.extend(quality_cfg["args"])
 
-        subprocess.run(cmd, capture_output=True)
+        # Popen használata a megszakíthatóság érdekében
+        self.current_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.current_process.communicate()
+        self.current_process = None
 
     def start_download_thread(self):
+        self.stop_requested = False
         self.download_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
         thread = threading.Thread(target=self.process_download, daemon=True)
         thread.start()
 
@@ -156,14 +184,13 @@ class MusicDownloaderGUI(ctk.CTk):
         link = self.link_entry.get().strip()
         if not link:
             messagebox.showwarning("Hiba", "Nincs megadva link!")
-            self.download_btn.configure(state="normal")
+            self.ui_reset()
             return
 
         quality = self.quality_map[self.quality_var.get()]
         save_path = Path(self.download_path.get())
         save_path.mkdir(parents=True, exist_ok=True)
 
-        # Spotify ág
         if "spotify.com" in link:
             self.log("Spotify link elemzése...")
             sp = self.init_spotify()
@@ -174,23 +201,32 @@ class MusicDownloaderGUI(ctk.CTk):
                 if tracks:
                     self.log(f"{len(tracks)} szám feldolgozása...")
                     for i, track in enumerate(tracks, 1):
+                        if self.stop_requested: break
                         search = f"{track['artist']} - {track['title']}"
                         self.log(f"[{i}/{len(tracks)}] {search}")
                         self.download_audio(search, quality, save_path)
-                    self.log("Letöltés befejezve!")
 
-        # YouTube vagy keresés
+                    if self.stop_requested:
+                        self.log("Letöltés leállítva a felhasználó által.")
+                    else:
+                        self.log("Letöltés befejezve!")
+
         elif "youtube.com" in link or "youtu.be" in link:
             self.log("YouTube letöltés...")
             self.download_audio(link, quality, save_path)
             self.log("Kész!")
+
         else:
             self.log(f"Keresés és letöltés: {link}")
             self.download_audio(link, quality, save_path)
             self.log("Kész!")
 
+        self.ui_reset()
+
+    def ui_reset(self):
         self.download_btn.configure(state="normal")
-        messagebox.showinfo("Kész", "A művelet befejeződött!")
+        self.stop_btn.configure(state="disabled")
+        self.current_process = None
 
 if __name__ == "__main__":
     app = MusicDownloaderGUI()
