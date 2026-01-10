@@ -11,29 +11,30 @@ from pathlib import Path
 try:
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal
-    from textual.widgets import Header, Footer, Button, Input, Label, TabbedContent, TabPane, Log, Select, DataTable
+    from textual.widgets import Header, Button, Input, Label, TabbedContent, TabPane, Log, DataTable, TextArea
 except ImportError:
     print("Hiba: A 'textual' könyvtár hiányzik. Telepítsd: pip install textual")
     exit(1)
 
 CONFIG_FILE = "config.json"
 
+class VimDataTable(DataTable):
+    BINDINGS = [
+        ("up", "noop", ""),
+        ("down", "noop", ""),
+        ("left", "noop", ""),
+        ("right", "noop", ""),
+    ]
+    def action_noop(self): pass
+    def on_click(self, event): event.stop()
+    def on_mouse_down(self, event): event.stop()
+    def on_mouse_scroll_up(self, event): event.stop()
+    def on_mouse_scroll_down(self, event): event.stop()
+
 class MusicDownloaderApp(App):
     CSS = """
     Screen {
         layout: vertical;
-    }
-    .controls {
-        height: auto;
-        layout: horizontal;
-        margin: 1 0;
-        align: left middle;
-    }
-    Button {
-        margin-right: 1;
-    }
-    #link_entry {
-        margin-top: 1;
     }
     DataTable {
         height: 1fr;
@@ -46,10 +47,22 @@ class MusicDownloaderApp(App):
     .settings_field {
         margin-bottom: 1;
     }
+    #cmd_line {
+        dock: bottom;
+        margin: 0;
+        border-top: solid $accent;
+    }
+    Tabs {
+        display: none;
+    }
     """
 
     TITLE = "Music Downloader Pro (TUI)"
-    BINDINGS = [("q", "quit", "Kilépés")]
+    BINDINGS = [
+        (":", "focus_command", "Parancs mód"),
+        ("j", "cursor_down", "Le"),
+        ("k", "cursor_up", "Fel"),
+    ]
 
     def __init__(self):
         super().__init__()
@@ -84,56 +97,83 @@ class MusicDownloaderApp(App):
         yield Header()
         with TabbedContent():
             with TabPane("Queue & Download", id="tab_queue"):
-                yield Input(placeholder="Spotify/YouTube link or search query...", id="link_entry")
-                with Horizontal(classes="controls"):
-                    yield Button("Add", id="btn_add", variant="primary")
-                    yield Button("Start All", id="btn_start", variant="success")
-                    yield Button("Pause", id="btn_pause", variant="warning")
-                    yield Button("Abort", id="btn_abort", variant="error")
-                    yield Button("Clear List", id="btn_clear")
-                
                 yield Label("Ready | Speed: 0 KiB/s | Progress: 0%", id="speed_label")
-                yield DataTable(id="queue_table")
+                yield VimDataTable(id="queue_table")
 
             with TabPane("Detailed Log", id="tab_log"):
                 yield Log(id="full_log")
 
             with TabPane("Settings", id="tab_settings"):
-                yield Label("Download Root Folder:", classes="settings_field")
-                yield Input(value=self.cfg_path, id="input_path", classes="settings_field")
-                
-                yield Label("Spotify Client ID:", classes="settings_field")
-                yield Input(value=self.cfg_sp_id, password=True, id="input_sp_id", classes="settings_field")
-                
-                yield Label("Spotify Client Secret:", classes="settings_field")
-                yield Input(value=self.cfg_sp_sec, password=True, id="input_sp_sec", classes="settings_field")
-                
-                yield Label("Format & Quality:", classes="settings_field")
-                options = [(k, k) for k in self.quality_map.keys()]
-                yield Select(options, value=self.cfg_quality, id="select_quality", allow_blank=False, classes="settings_field")
-                
-                yield Button("Save Settings", id="btn_save", variant="primary")
-        yield Footer()
+                yield TextArea(id="settings_editor", language="properties")
+        
+        yield Input(placeholder="Parancsokhoz írd be: :help", id="cmd_line")
 
     def on_mount(self):
         table = self.query_one(DataTable)
         table.add_columns("ID", "Status", "Name", "Folder")
+        table.focus()
         self.log_msg("Application started.", "SYSTEM")
+        # Load settings into the editor
+        self.update_settings_editor()
 
-    def on_button_pressed(self, event: Button.Pressed):
-        btn_id = event.button.id
-        if btn_id == "btn_add":
-            self.add_to_queue_thread()
-        elif btn_id == "btn_start":
+    def action_focus_command(self):
+        cmd = self.query_one("#cmd_line", Input)
+        cmd.value = ":"
+        cmd.focus()
+        cmd.cursor_position = len(cmd.value)
+
+    def action_cursor_down(self):
+        try: self.query_one(DataTable).action_cursor_down()
+        except: pass
+
+    def action_cursor_up(self):
+        try: self.query_one(DataTable).action_cursor_up()
+        except: pass
+
+    def on_input_submitted(self, event: Input.Submitted):
+        if event.input.id == "cmd_line":
+            self.handle_command(event.value)
+            event.input.value = ""
+            event.input.blur()
+            if self.query_one(TabbedContent).active == "tab_queue":
+                self.query_one(DataTable).focus()
+
+    def handle_command(self, cmd_str):
+        cmd_str = cmd_str.strip()
+        if not cmd_str.startswith(":"): return
+        
+        parts = cmd_str[1:].split(" ", 1)
+        cmd = parts[0]
+        args = parts[1] if len(parts) > 1 else ""
+
+        if cmd in ["q", "quit"]:
+            self.exit()
+        elif cmd == "add":
+            if args:
+                threading.Thread(target=self.process_input, args=(args,), daemon=True).start()
+            else:
+                self.log_msg("Használat: :add <link>", "ERROR")
+        elif cmd == "start":
             self.start_downloads()
-        elif btn_id == "btn_pause":
+        elif cmd == "pause":
             self.toggle_pause()
-        elif btn_id == "btn_abort":
+        elif cmd == "abort":
             self.abort_process()
-        elif btn_id == "btn_clear":
+        elif cmd == "clear":
             self.clear_queue_list()
-        elif btn_id == "btn_save":
+        elif cmd == "save":
             self.save_settings()
+        elif cmd == "queue":
+            self.query_one(TabbedContent).active = "tab_queue"
+        elif cmd == "log":
+            self.query_one(TabbedContent).active = "tab_log"
+        elif cmd == "settings":
+            self.query_one(TabbedContent).active = "tab_settings"
+        elif cmd == "help":
+            self.log_msg("Parancsok: :add, :start, :pause, :abort, :clear, :save, :quit", "HELP")
+            self.query_one(TabbedContent).active = "tab_log"
+        else:
+            self.log_msg(f"Ismeretlen parancs: {cmd}", "ERROR")
 
     def load_settings(self):
         if os.path.exists(CONFIG_FILE):
@@ -146,11 +186,48 @@ class MusicDownloaderApp(App):
                     self.cfg_quality = data.get("quality", "MP3 320kbps")
             except: pass
 
+    def update_settings_editor(self):
+        # Convert internal quality to short code
+        q_code = "mp3-3"
+        if "128" in self.cfg_quality: q_code = "mp3-1"
+        elif "256" in self.cfg_quality: q_code = "mp3-2"
+        elif "320" in self.cfg_quality: q_code = "mp3-3"
+        elif "WebM" in self.cfg_quality: q_code = "webm"
+        elif "OGG" in self.cfg_quality: q_code = "ogg"
+        elif "M4A" in self.cfg_quality: q_code = "m4a"
+        elif "FLAC" in self.cfg_quality: q_code = "flac"
+
+        text = (
+            f"path={self.cfg_path}\n"
+            f"sp_id={self.cfg_sp_id}\n"
+            f"sp_sec={self.cfg_sp_sec}\n"
+            f"quality={q_code}\n"
+        )
+        try:
+            self.query_one("#settings_editor", TextArea).text = text
+        except: pass
+
     def save_settings(self):
-        self.cfg_path = self.query_one("#input_path", Input).value
-        self.cfg_sp_id = self.query_one("#input_sp_id", Input).value.strip()
-        self.cfg_sp_sec = self.query_one("#input_sp_sec", Input).value.strip()
-        self.cfg_quality = self.query_one("#select_quality", Select).value
+        # Parse settings from TextArea
+        raw_text = self.query_one("#settings_editor", TextArea).text
+        new_conf = {}
+        for line in raw_text.splitlines():
+            if "=" in line:
+                key, val = line.split("=", 1)
+                new_conf[key.strip()] = val.strip()
+
+        self.cfg_path = new_conf.get("path", self.cfg_path)
+        self.cfg_sp_id = new_conf.get("sp_id", self.cfg_sp_id)
+        self.cfg_sp_sec = new_conf.get("sp_sec", self.cfg_sp_sec)
+        
+        q_input = new_conf.get("quality", "mp3-3").lower()
+        if q_input == "mp3-1": self.cfg_quality = "MP3 128kbps"
+        elif q_input == "mp3-2": self.cfg_quality = "MP3 256kbps"
+        elif q_input == "mp3-3": self.cfg_quality = "MP3 320kbps"
+        elif q_input == "webm": self.cfg_quality = "WebM (Best Audio)"
+        elif q_input == "ogg": self.cfg_quality = "OGG"
+        elif q_input == "m4a": self.cfg_quality = "M4A"
+        elif q_input == "flac": self.cfg_quality = "FLAC"
 
         data = {
             "path": self.cfg_path,
@@ -161,7 +238,7 @@ class MusicDownloaderApp(App):
         with open(CONFIG_FILE, "w") as f:
             json.dump(data, f)
         self.log_msg("Settings saved to local config.", "UI")
-        self.notify("Configuration saved!")
+        self.log_msg("Configuration saved!", "SYSTEM")
 
     def log_msg(self, message, level="INFO"):
         ts = datetime.datetime.now().strftime("%H:%M:%S")
@@ -186,9 +263,6 @@ class MusicDownloaderApp(App):
 
     def toggle_pause(self):
         self.pause_requested = not self.pause_requested
-        btn = self.query_one("#btn_pause", Button)
-        btn.label = "Resume" if self.pause_requested else "Pause"
-        btn.variant = "primary" if self.pause_requested else "warning"
         self.log_msg(f"Process {'PAUSED' if self.pause_requested else 'RESUMED'}", "USER")
 
     def abort_process(self):
@@ -219,15 +293,6 @@ class MusicDownloaderApp(App):
             self.log_msg(f"Spotify Authentication Failed: {e}", "ERROR")
             return None
 
-    def add_to_queue_thread(self):
-        link_input = self.query_one("#link_entry", Input)
-        link = link_input.value.strip()
-        if not link: return
-        
-        self.query_one("#btn_add", Button).disabled = True
-        threading.Thread(target=self.process_input, args=(link,), daemon=True).start()
-        link_input.value = ""
-
     def process_input(self, link):
         self.log_msg(f"Analyzing: {link}", "ANALYZER")
         clean_link = link.split('?')[0]
@@ -236,7 +301,6 @@ class MusicDownloaderApp(App):
         if "spotify.com" in clean_link:
             sp = self.init_spotify()
             if not sp:
-                self.call_from_thread(lambda: setattr(self.query_one("#btn_add", Button), "disabled", False))
                 return
 
             try:
@@ -294,7 +358,6 @@ class MusicDownloaderApp(App):
             self.log_msg(f"Added search query: {link}", "SUCCESS")
 
         self.refresh_queue_ui()
-        self.call_from_thread(lambda: setattr(self.query_one("#btn_add", Button), "disabled", False))
 
     def start_downloads(self):
         if not self.download_queue or self.is_downloading: return
