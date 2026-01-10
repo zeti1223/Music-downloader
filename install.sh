@@ -24,14 +24,7 @@ source .venv/bin/activate
 echo "Installing Python libraries..."
 pip install --upgrade pip
 
-pip install \
-    yt-dlp \
-    spotipy \
-    mutagen \
-    requests \
-    pillow \
-    rich \
-    questionary
+pip install -r requirements.txt
 
 echo "Done!"
 echo ""
